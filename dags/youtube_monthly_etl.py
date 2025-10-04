@@ -3,62 +3,76 @@ from airflow.operators.python import PythonOperator
 from datetime import datetime
 import os
 
-from scripts.check_file import check_file_exists
 from scripts.transform_watch import transform_data
-#from scripts.youtube_api_enrich import enrich_youtube_data
 from scripts.upload_to_s3 import upload_file_to_s3
-from airflow.providers.amazon.aws.operators.athena import AthenaOperator
 
+
+# S3 and local paths
+BUCKET = "nancy-youtube"
+
+RAW_PATH = "/opt/airflow/dags/scripts/include/watch-history.json"
+STAGING_PATH = "/opt/airflow/dags/scripts/data/processed_watch_history.csv"
+CURATED_PATH = "/opt/airflow/dags/scripts/data/watch_history.parquet"
+
+RAW_KEY = "raw/watch-history.json"
+STAGING_KEY = "staging/processed_watch_history.csv"
+CURATED_KEY = "curated/watch_history.parquet"
+
+
+# 🧩 Step 1 — Check if file exists locally
+def check_file_exists(file_path: str):
+    """Check if the YouTube watch history file exists before transformation."""
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(
+            f" Missing input file: {file_path}\n"
+            "Please download your YouTube watch-history.json and place it in /include/"
+        )
+    print(f"✅ Found file: {file_path}")
+
+
+#DAG definition
 with DAG(
     dag_id="youtube_monthly_etl",
-    description="YouTube Monthly ETL Pipeline with S3 and Athena",
+    description="Modular YouTube ETL Pipeline: check, transform, and upload to S3",
     schedule_interval="@monthly",
     start_date=datetime(2025, 1, 1),
     catchup=False,
-    tags=["youtube","etl"]
+    tags=["youtube", "etl", "s3"]
 ) as dag:
 
-    # 1) Check input file exists
-    check_input = PythonOperator(
-        task_id="check_input_file",
-        python_callable=check_file_exists
+    #  Check if raw JSON exists
+    check_file = PythonOperator(
+        task_id="check_watch_history_file",
+        python_callable=check_file_exists,
+        op_args=[RAW_PATH],
     )
 
-    # # 2) Upload raw watch-history.json to S3/raw
-    # upload_raw = PythonOperator(
-    #     task_id="upload_raw_to_s3",
-    #     python_callable=lambda: upload_file_to_s3(
-    #         local_path="/opt/airflow/dags/scripts/include/watch-history.json",
-    #         s3_key="raw/watch-history.json"
-    #     )
-    # )
-
-    # 3) Transform and enrich watch history
+    #  Transform and save locally
     transform = PythonOperator(
         task_id="transform_watch_history",
-        python_callable=transform_data
+        python_callable=transform_data,
     )
 
-    # 4) Enrich top videos/channels via YouTube API
-    # enrich = PythonOperator(
-    #     task_id="enrich_youtube_data",
-    #     python_callable=enrich_youtube_data
-    # )
+    #  Upload raw layer
+    upload_raw = PythonOperator(
+        task_id="upload_raw_to_s3",
+        python_callable=upload_file_to_s3,
+        op_args=[RAW_PATH, RAW_KEY, BUCKET],
+    )
 
-    # 5) Optional: Athena query to validate or summarize data
-    # athena_query = AthenaOperator(
-    #     task_id="athena_top_channels",
-    #     query="""
-    #         SELECT channel_name, COUNT(*) as videos_watched
-    #         FROM curated_videos
-    #         GROUP BY channel_name
-    #         ORDER BY videos_watched DESC
-    #         LIMIT 10;
-    #     """,
-    #     database="youtube_curated_db",
-    #     output_location="s3://your-bucket/query-results/",
-    #     aws_conn_id="aws_default"
-    # )
+    #  Upload staging layer
+    upload_staging = PythonOperator(
+        task_id="upload_staging_to_s3",
+        python_callable=upload_file_to_s3,
+        op_args=[STAGING_PATH, STAGING_KEY, BUCKET],
+    )
 
-    # Define task order
-    check_input >> transform
+    #  Upload curated layer
+    upload_curated = PythonOperator(
+        task_id="upload_curated_to_s3",
+        python_callable=upload_file_to_s3,
+        op_args=[CURATED_PATH, CURATED_KEY, BUCKET],
+    )
+
+    # DAG Flow
+    check_file >> transform >> [upload_raw, upload_staging, upload_curated]
