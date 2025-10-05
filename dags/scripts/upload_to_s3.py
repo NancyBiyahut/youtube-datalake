@@ -36,7 +36,7 @@ def upload_file_to_s3(local_file: str, s3_key: str, bucket: str = None):
 
     try:
         s3.upload_file(local_file, bucket, s3_key)
-        print(f"✅ Uploaded {local_file} → s3://{bucket}/{s3_key}")
+        print(f" Uploaded {local_file} → s3://{bucket}/{s3_key}")
     except Exception as e:
-        print(f"❌ Error uploading {local_file} → s3://{bucket}/{s3_key}: {str(e)}")
+        print(f" Error uploading {local_file} → s3://{bucket}/{s3_key}: {str(e)}")
         raise

@@ -5,6 +5,8 @@ import os
 
 from scripts.transform_watch import transform_data
 from scripts.upload_to_s3 import upload_file_to_s3
+from scripts.run_glue_crawler import run_glue_crawler
+from scripts.run_athena_queries import run_athena_queries
 
 
 # S3 and local paths
@@ -19,7 +21,7 @@ STAGING_KEY = "staging/processed_watch_history.csv"
 CURATED_KEY = "curated/watch_history.parquet"
 
 
-# 🧩 Step 1 — Check if file exists locally
+#  Step 1 — Check if file exists locally
 def check_file_exists(file_path: str):
     """Check if the YouTube watch history file exists before transformation."""
     if not os.path.exists(file_path):
@@ -27,7 +29,7 @@ def check_file_exists(file_path: str):
             f" Missing input file: {file_path}\n"
             "Please download your YouTube watch-history.json and place it in /include/"
         )
-    print(f"✅ Found file: {file_path}")
+    print(f" Found file: {file_path}")
 
 
 #DAG definition
@@ -74,5 +76,16 @@ with DAG(
         op_args=[CURATED_PATH, CURATED_KEY, BUCKET],
     )
 
+    run_crawler = PythonOperator(
+        task_id="run_glue_crawler",
+        python_callable=run_glue_crawler,
+        op_args=["youtube_crawler"],
+    )
+
+    run_athena = PythonOperator(
+        task_id="run_athena_queries",
+        python_callable=run_athena_queries,
+    )
+
     # DAG Flow
-    check_file >> transform >> [upload_raw, upload_staging, upload_curated]
+    check_file >> transform >> [upload_raw, upload_staging, upload_curated]>> run_crawler >> run_athena
